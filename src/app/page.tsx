@@ -1,103 +1,205 @@
-import Image from "next/image";
+"use client";
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import SelectTemplate from "@/app/Components/SelectTemplate"; // pastikan path benar
+import { useContentMapStore } from "./store/app.store";
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [inputType, setInputType] = useState<"subject" | "text" | "file">("subject");
+  const [subject, setSubject] = useState("");
+  const [text, setText] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [outline, setOutline] = useState<any[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = useState<any>(null);
+  const [step, setStep] = useState<"input" | "outline" | "template">("input");
+  const [loading, setLoading] = useState(false);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  const router = useRouter();
+  const { setContentMap } = useContentMapStore(); // <- simpan contentMap ke Zustand
+
+ const generateOutline = async () => {
+  if ((inputType === "subject" && !subject) ||
+      (inputType === "text" && !text) ||
+      (inputType === "file" && !file)) {
+    alert("Mohon isi input sesuai jenis yang dipilih");
+    return;
+  }
+
+  setLoading(true);
+  try {
+    let content = "";
+    if (inputType === "subject") content = subject;
+    if (inputType === "text") content = text;
+
+    const res = await fetch("/api/generate-outline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subject: content }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      const extractedOutline = data.outline || [];
+      setOutline(extractedOutline);
+      await generateContentMap(extractedOutline); // Panggil generateContentMap setelah outline dihasilkan
+      setStep("outline");
+    } else {
+      console.error("Gagal generate:", data.error);
+      alert("Gagal generate outline");
+    }
+  } catch (err) {
+    console.error("Error:", err);
+    alert("Terjadi kesalahan");
+  } finally {
+    setLoading(false);
+  }
+};
+
+const generateContentMap = async (outline: any[]) => {
+  try {
+    const res = await fetch("/api/generate-content-map", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ outline }),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      setContentMap(data.contentMap); // Simpan content map ke store
+      console.log("✅ ContentMap:", data.contentMap);
+    } else {
+      console.error("Gagal generate content map:", data.error);
+      alert("Gagal generate content map");
+    }
+  } catch (err) {
+    console.error("Error:", err);
+  }
+};
+
+  const handleNextStep = () => {
+    if (outline.length === 0) return;
+    setStep("template");
+  };
+
+  const handleTemplateSelected = (template: any) => {
+    if (!template) {
+      alert("Pilih template terlebih dahulu");
+      return;
+    }
+
+    setSelectedTemplate(template);
+    // bisa juga simpan ke Zustand jika ingin
+    router.push("/dummy"); // lanjut ke preview & download
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 gap-6 font-sans">
+
+      <h1 className="text-3xl font-bold text-center mb-2">
+        🤖 AI Generate PPT dari Topik, Teks, atau File
+      </h1>
+
+      {step === "input" && (
+        <div className="w-full max-w-2xl bg-white p-6 rounded-lg shadow-md border">
+          <div className="mb-4">
+            <select
+              value={inputType}
+              onChange={(e) => setInputType(e.target.value as any)}
+              className="border border-gray-300 rounded px-3 py-2 bg-white"
+            >
+              <option value="subject">Dari Tema</option>
+              <option value="text">Dari Teks</option>
+              <option value="file">Dari File</option>
+            </select>
+          </div>
+
+          {inputType === "subject" && (
+            <input
+              type="text"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="Contoh: Perubahan Iklim"
+              className="w-full border border-black rounded px-3 py-2"
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+          )}
+
+          {inputType === "text" && (
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Tulis atau tempelkan teks panjang (maks 2000 karakter)"
+              rows={5}
+              maxLength={2000}
+              className="w-full border border-black rounded px-3 py-2"
+            />
+          )}
+
+          {inputType === "file" && (
+            <input
+              type="file"
+              accept=".txt,.pdf,.doc,.docx"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="w-full border border-black rounded px-3 py-2"
+            />
+          )}
+
+          <button
+            onClick={generateOutline}
+            disabled={loading}
+            className="mt-4 bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 disabled:opacity-60 w-full"
           >
-            Read our docs
-          </a>
+            {loading ? "Menghasilkan..." : "🚀 Generate Outline"}
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      )}
+
+      {step === "outline" && (
+        <div className="w-full max-w-2xl bg-gray-50 p-6 rounded-lg shadow-inner">
+          <h2 className="text-xl font-semibold mb-4">📝 Outline Presentasi</h2>
+          {outline.map((slide, idx) => (
+            <div key={idx} className="mb-5 p-4 bg-white rounded border">
+              <h3 className="font-bold text-lg text-blue-700">{slide.title}</h3>
+              {slide.bullets?.length > 0 ? (
+                <ul className="list-disc ml-5 mt-2 space-y-1">
+                  {slide.bullets.map((point: string, i: number) => (
+                    <li key={i} className="text-gray-700">{point}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-gray-500 italic">Tidak ada bullet</p>
+              )}
+            </div>
+          ))}
+
+          <button
+            onClick={handleNextStep}
+            className="mt-6 bg-green-600 text-white px-6 py-3 rounded font-medium hover:bg-green-700 w-full"
+          >
+            ✅ Lanjut: Pilih Template
+          </button>
+        </div>
+      )}
+
+      {step === "template" && (
+        <div className="w-full max-w-2xl bg-gray-50 p-6 rounded-lg shadow-inner">
+          <h2 className="text-xl font-semibold mb-4">🎨 Pilih Template</h2>
+          <SelectTemplate onSelect={(template) => setSelectedTemplate(template)} />
+
+          {selectedTemplate && (
+            <div className="mt-4 p-4 bg-white rounded border">
+              <h3 className="font-bold text-lg text-pink-600">{selectedTemplate.name}</h3>
+              <p className="text-gray-700">{selectedTemplate.description}</p>
+            </div>
+          )}
+
+          <button
+            onClick={() => handleTemplateSelected(selectedTemplate)}
+            className="mt-6 bg-green-600 text-white px-6 py-3 rounded font-medium hover:bg-green-700 w-full"
+          >
+            ✅ Generate PPT
+          </button>
+        </div>
+      )}
     </div>
   );
 }
