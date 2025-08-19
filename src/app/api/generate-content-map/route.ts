@@ -11,7 +11,7 @@ type Layout =
   | 'quote'
   | 'comparison'
   | 'conclusion'
-  | 'three-images-with-description'; // ✅ NEW
+  | 'three-images-with-description';
 
 type ChartType = 'bar' | 'line' | 'pie' | 'scatter';
 
@@ -41,8 +41,8 @@ export interface Slide {
   content?: ChartContent;
   imageUrl?: string;
   caption?: string;
-  images?: string[]; // ✅ NEW (for three-images-with-description)
-  description?: string; // ✅ NEW (for three-images-with-description)
+  images?: string[];
+  description?: string;
   left?: any;
   right?: any;
   conclusion?: string;
@@ -54,66 +54,97 @@ export interface ContentMap {
   slides: Slide[];
 }
 
-// ==================== IMAGE SEARCH (UNSPLASH) ====================
-
+// ==================== IMAGE SEARCH (GOOGLE) ====================
 const imageCache: Map<string, string | null> = new Map();
 
-function cleanUnsplashUrl(url: string): string {
-  try {
-    const urlObj = new URL(url);
-    urlObj.searchParams.delete('ixid');
-    return urlObj.toString();
-  } catch {
-    return url;
-  }
-}
-
 async function searchImage(query: string): Promise<string | null> {
+  if (!query) return null;
   if (imageCache.has(query)) return imageCache.get(query) ?? null;
 
   try {
-    const accessKey = process.env.UNSPLASH_ACCESS_KEY;
-    if (!accessKey) return null;
+    const apiKey = process.env.GOOGLE_API_KEY;
+    const cx = process.env.GOOGLE_CX;
+    if (!apiKey || !cx) {
+      console.warn('⚠️ GOOGLE_API_KEY or GOOGLE_CX not configured');
+      return null;
+    }
 
     const res = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=1`,
-      { headers: { Authorization: `Client-ID ${accessKey}` } }
+      `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&searchType=image&q=${encodeURIComponent(
+        query
+      )}&num=1`
     );
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn('⚠️ Google image search failed:', res.status, res.statusText);
+      return null;
+    }
 
     const data = await res.json();
-    const rawUrl = data?.results?.[0]?.urls?.regular || null;
-    if (!rawUrl) return null;
-
-    const cleanedUrl = cleanUnsplashUrl(rawUrl);
-    imageCache.set(query, cleanedUrl);
-    return cleanedUrl;
+    const url = data?.items?.[0]?.link ?? null;
+    imageCache.set(query, url);
+    return url;
   } catch (err) {
-    console.error('Error fetching image:', err);
+    console.error('❌ Error fetching Google image:', err);
     return null;
   }
 }
 
-// ==================== MAIN ROUTE ====================
+// ==================== HELPERS ====================
+function ensureConclusion(contentMap: ContentMap) {
+  const hasConclusion = contentMap.slides.some((s) => s.layout === 'conclusion');
+  if (!hasConclusion) {
+    contentMap.slides.push({
+      layout: 'conclusion',
+      title: 'Kesimpulan',
+      conclusion: 'Presentasi ini memberikan gambaran menyeluruh mengenai topik yang dibahas.',
+    });
+  }
+}
 
-export async function POST(req: NextRequest) {
-  const startTime = Date.now();
+function ensureComparison(contentMap: ContentMap, outline: { title: string }[]) {
+  const needsComparison = outline.some((item) =>
+    /vs|perbandingan|kekurangan|kelebihan/i.test(item.title)
+  );
+  const hasComparison = contentMap.slides.some((s) => s.layout === 'comparison');
 
-  try {
-    const body = await req.json();
-    const { outline } = body as { outline: Array<{ title: string; [k: string]: any }> };
+  if (needsComparison && !hasComparison) {
+    contentMap.slides.push({
+      layout: 'comparison',
+      title: 'Perbandingan',
+      comparison: {
+        left: { title: 'Opsi A', description: 'Kelebihan dan kekurangan opsi A.' },
+        right: { title: 'Opsi B', description: 'Kelebihan dan kekurangan opsi B.' },
+      },
+    });
+  }
+}
 
-    if (!outline || !Array.isArray(outline)) {
-      return NextResponse.json({ message: 'Invalid outline format' }, { status: 400 });
-    }
-    for (const item of outline) {
-      if (typeof item !== 'object' || !item.title) {
-        return NextResponse.json({ message: 'Invalid outline item format' }, { status: 400 });
+async function enrichImages(contentMap: ContentMap) {
+  for (const slide of contentMap.slides) {
+    // three-images-with-description
+    if (slide.layout === 'three-images-with-description') {
+      if (!slide.images || slide.images.length < 3) {
+        slide.images = [];
+        for (let i = 0; i < 3; i++) {
+          const query = `${slide.title || contentMap.topic} ${i + 1}`;
+          const img = await searchImage(query);
+          if (img) slide.images.push(img);
+        }
       }
     }
 
-    const systemPrompt = `
+    // single image slide
+    if (['image', 'conclusion'].includes(slide.layout) && !slide.imageUrl) {
+      const query = slide.title || contentMap.topic || '';
+      const imageUrl = await searchImage(query || 'presentation');
+      if (imageUrl) slide.imageUrl = imageUrl;
+    }
+  }
+}
+
+function buildSystemPrompt() {
+  return `
 Kamu adalah asisten ahli presentasi. Berdasarkan outline slide presentasi, buatlah struktur contentMap lengkap untuk sebuah presentasi PowerPoint yang menarik, kreatif, dan variatif.
 
 Gunakan berbagai jenis layout: title, bulleted-list, image, table, chart, quote, comparison, conclusion, dan three-images-with-description.
@@ -128,7 +159,7 @@ WAJIB:
   "images": string[3],
   "description": string
 }
-4) Hanya keluarkan JSON murni sesuai skema berikut:
+4) Output harus berupa JSON murni sesuai skema berikut:
 
 {
   "topic": string,
@@ -141,21 +172,29 @@ WAJIB:
       'chart',
       'quote',
       'comparison',
+      
+      'timeline',
+      'process',
       'conclusion',
       'three-images-with-description'
     ])},
     "title"?: string,
     "subtitle"?: string,
     "text"?: string,
+    "timeline"?: Array<{ "year": string, "event": string }>,
+    "process"?: Array<{ "step": string, "description": string }>,
     "bullets"?: string[],
     "table"?: { "data": string[][] },
+    "quote"?: { "text": string, "author": string },
+    "chart"?: { "type": "bar" | "line" | "pie" | "scatter", "labels": string[], "d
     "content"?: {
       "type": "bar" | "line" | "pie" | "scatter",
       "labels"?: string[],
       "datasets": Array<{ "label": string, "data": any[] }>
     },
-    "imageUrl"?: string,
+    "imageUrl"?: string ,
     "caption"?: string,
+    
     "images"?: string[],
     "description"?: string,
     "left"?: any,
@@ -167,106 +206,92 @@ WAJIB:
     }
   }>
 }`;
+}
 
-    const userPrompt = `Outline Presentasi:\n${JSON.stringify(outline, null, 2)}\n\nSilakan buat contentMap JSON:`;
+async function callCohere(systemPrompt: string, userPrompt: string) {
+  const response = await fetch('https://api.cohere.ai/v1/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.COHERE_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'command-a-03-2025',
+      message: userPrompt,
+      preamble: systemPrompt,
+      max_tokens: 1500,
+      temperature: 0.7,
+      response_format: { type: 'json_object' },
+    }),
+  });
 
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(`Cohere API error: ${errData.message || response.statusText}`);
+  }
+
+  const data = await response.json();
+  const jsonString =
+    typeof data.text === 'string'
+      ? data.text
+      : typeof data.message === 'string'
+      ? data.message
+      : null;
+
+  if (!jsonString) throw new Error('Cohere response missing valid JSON text');
+
+  return JSON.parse(jsonString) as ContentMap;
+}
+
+// ==================== MAIN ROUTE ====================
+export async function POST(req: NextRequest) {
+  const startTime = Date.now();
+
+  try {
+    const body = await req.json();
+    const { outline } = body as { outline: Array<{ title: string; [k: string]: any }> };
+
+    if (!outline || !Array.isArray(outline)) {
+      return NextResponse.json({ message: 'Invalid outline format' }, { status: 400 });
+    }
+
+    for (const item of outline) {
+      if (typeof item !== 'object' || !item.title) {
+        return NextResponse.json({ message: 'Invalid outline item format' }, { status: 400 });
+      }
+    }
 
     if (!process.env.COHERE_API_KEY) {
       return NextResponse.json({ message: 'COHERE_API_KEY not configured' }, { status: 500 });
     }
 
+    const systemPrompt = buildSystemPrompt();
+    const userPrompt = `Outline Presentasi:\n${JSON.stringify(
+      outline,
+      null,
+      2
+    )}\n\nSilakan buat contentMap JSON:`;
+
+    // 🔹 Call Cohere
     const cohereStart = Date.now();
-    const response = await fetch('https://api.cohere.ai/v1/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.COHERE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'command-r-plus',
-        message: userPrompt,
-        preamble: systemPrompt,
-        max_tokens: 1500,
-        temperature: 0.7,
-        response_format: { type: 'json_object' },
-      }),
-    });
-
-    console.log(`Cohere API call: ${Date.now() - cohereStart}ms`);
-
-    if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(`Cohere API error: ${errData.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-
-    let contentMap: ContentMap;
-    try {
-      const jsonString =
-        typeof data.text === 'string'
-          ? data.text
-          : typeof data.message === 'string'
-          ? data.message
-          : null;
-
-      if (!jsonString) throw new Error('Cohere response missing valid JSON text');
-      contentMap = JSON.parse(jsonString) as ContentMap;
-    } catch (e) {
-      console.error('Failed to parse Cohere response:', data);
-      return NextResponse.json({ error: 'Failed to parse Cohere response' }, { status: 500 });
-    }
+    const contentMap = await callCohere(systemPrompt, userPrompt);
+    console.log(`⏱ Cohere API call: ${Date.now() - cohereStart}ms`);
 
     if (!contentMap?.slides || !Array.isArray(contentMap.slides)) {
       return NextResponse.json({ error: 'Invalid content map format' }, { status: 500 });
     }
 
-    const hasConclusion = contentMap.slides.some((s) => s.layout === 'conclusion');
-    if (!hasConclusion) {
-      contentMap.slides.push({
-        layout: 'conclusion',
-        title: 'Kesimpulan',
-        conclusion: 'Presentasi ini memberikan gambaran menyeluruh mengenai topik yang dibahas.',
-      });
-    }
+    // 🔹 Ensure mandatory slides
+    ensureConclusion(contentMap);
+    ensureComparison(contentMap, outline);
 
-    const needsComparison = outline.some((item) =>
-      /vs|perbandingan|kekurangan|kelebihan/i.test(item.title)
-    );
-    const hasComparison = contentMap.slides.some((s) => s.layout === 'comparison');
-    if (needsComparison && !hasComparison) {
-      contentMap.slides.push({
-        layout: 'comparison',
-        title: 'Perbandingan',
-        comparison: {
-          left: { title: 'Opsi A', description: 'Kelebihan dan kekurangan opsi A.' },
-          right: { title: 'Opsi B', description: 'Kelebihan dan kekurangan opsi B.' },
-        },
-      });
-    }
+    // 🔹 Fetch images
+    await enrichImages(contentMap);
 
-    // ✅ Auto fetch image for new layout
-    for (const slide of contentMap.slides) {
-      if (slide.layout === 'three-images-with-description' && (!slide.images || slide.images.length < 3)) {
-        slide.images = [];
-        for (let i = 0; i < 3; i++) {
-          const query = `${slide.title || contentMap.topic} ${i + 1}`;
-          const img = await searchImage(query);
-          if (img) slide.images.push(img);
-        }
-      }
-
-      if (['image', 'conclusion'].includes(slide.layout) && !slide.imageUrl) {
-        const query = slide.title || contentMap.topic || '';
-        const imageUrl = await searchImage(query || 'presentation');
-        if (imageUrl) slide.imageUrl = imageUrl;
-      }
-    }
-
-    console.log(`Total processing: ${Date.now() - startTime}ms`);
+    console.log(`✅ Total processing: ${Date.now() - startTime}ms`);
     return NextResponse.json({ contentMap }, { status: 200 });
   } catch (error) {
-    console.error('Unexpected error:', error);
+    console.error('❌ Unexpected error:', error);
     return NextResponse.json({ error: 'Failed to generate content map' }, { status: 500 });
   }
 }
