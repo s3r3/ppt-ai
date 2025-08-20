@@ -1,7 +1,20 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        fs: false,
+        https: false,
+        http: false,
+        path: false,
+        os: false,
+        crypto: false,
+        stream: false,
+      };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;
