@@ -201,14 +201,15 @@ export async function generatePPTXFromTemplate(contentMap: any, template: any) {
   }
 
   // ====== FileName ======
-  let fileName =
-    contentMap.topic || contentMap.slides[0]?.title || "Generated_Presentation";
-  fileName = fileName.replace(/[\\/:*?"<>|]/g, "_");
+let fileName =
+  contentMap.topic || contentMap.slides[0]?.title || "Generated_Presentation";
+fileName = fileName.replace(/[\\/:*?"<>|]/g, "_");
 
-  try {
-    await pptx.writeFile({ fileName: `${fileName}.pptx` });
-  } catch (err) {
-    console.error("❌ Failed to write PPTX file:", err);
-    throw err;
-  }
+try {
+  const blob = await pptx.write("blob" as any) as Blob;
+  return { blob, fileName: `${fileName}.pptx` };
+} catch (err) {
+  console.error("❌ Failed to generate PPTX blob:", err);
+  throw err;
+}
 }

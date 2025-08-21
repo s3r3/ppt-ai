@@ -1,4 +1,5 @@
-'use client';
+"use client";
+
 import { useState, useEffect } from "react";
 import { useContentMapStore } from "../store/app.store";
 import SlidePreview from "../preview/preview";
@@ -13,7 +14,7 @@ export default function Dummy() {
   useEffect(() => {
     if (contentMap && contentMap.slides) {
       setSlides(contentMap.slides);
-      setError(null); // Reset error if contentMap is valid
+      setError(null);
     } else {
       setSlides([]);
       setError("No slides data available in content map");
@@ -26,9 +27,22 @@ export default function Dummy() {
       return;
     }
     try {
-      await generatePPTXFromTemplate(contentMap, template);
+      const { blob, fileName } = await generatePPTXFromTemplate(
+        contentMap,
+        template
+      );
+
+      // ✅ manual download via <a>
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (err) {
-      console.error("Failed to generate PPT:", err);
+      console.error("❌ Failed to generate PPT:", err);
       setError("Error generating PPT. Check console for details.");
     }
   };
@@ -38,9 +52,7 @@ export default function Dummy() {
       <h2 className="text-2xl font-bold mb-6">Preview & Download PPT</h2>
 
       {error && (
-        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">
-          {error}
-        </div>
+        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">{error}</div>
       )}
 
       {slides.length > 0 ? (

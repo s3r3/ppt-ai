@@ -1,3 +1,4 @@
+// src/app/api/generate-content-map/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 
 // ========== TYPES ==========
@@ -53,96 +54,40 @@ export interface ContentMap {
   slides: Slide[];
 }
 
-// ==================== IMAGE SEARCH (HYBRID) ====================
+// ==================== IMAGE SEARCH (GOOGLE) ====================
 const imageCache: Map<string, string | null> = new Map();
 
 async function searchImage(query: string): Promise<string | null> {
   if (!query) return null;
   if (imageCache.has(query)) return imageCache.get(query) ?? null;
 
-  const placeholderImage = 'https://via.placeholder.com/800x600?text=Image+Not+Found';
-  const searchStart = Date.now();
-
-  // Helper to cache and return result
-  const cacheResult = (url: string | null) => {
-    imageCache.set(query, url);
-    return url;
-  };
-
-  // 1. Unsplash
-  try {
-    const unsplashKey = process.env.UNSPLASH_API_KEY;
-    if (unsplashKey) {
-      const res = await fetch(
-        `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=1&client_id=${unsplashKey}`,
-        { headers: { 'Accept-Version': 'v1' } }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const url = data.results?.[0]?.urls?.regular;
-        if (url) {
-          console.log(`✅ Unsplash found image for "${query}" in ${Date.now() - searchStart}ms`);
-          return cacheResult(url);
-        }
-      }
-    } else {
-      console.warn('⚠️ UNSPLASH_API_KEY not configured');
-    }
-  } catch (err) {
-    console.warn('⚠️ Unsplash search failed:', err);
-  }
-
-  // 2. Pexels
-  try {
-    const pexelsKey = process.env.PEXELS_API_KEY;
-    if (pexelsKey) {
-      const res = await fetch(
-        `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=1`,
-        { headers: { Authorization: pexelsKey } }
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const url = data.photos?.[0]?.src?.medium;
-        if (url) {
-          console.log(`✅ Pexels found image for "${query}" in ${Date.now() - searchStart}ms`);
-          return cacheResult(url);
-        }
-      }
-    } else {
-      console.warn('⚠️ PEXELS_API_KEY not configured');
-    }
-  } catch (err) {
-    console.warn('⚠️ Pexels search failed:', err);
-  }
-
-  // 3. Google Custom Search (Fallback)
   try {
     const apiKey = process.env.GOOGLE_API_KEY;
     const cx = process.env.GOOGLE_CX;
-    if (apiKey && cx) {
-      const res = await fetch(
-        `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&searchType=image&q=${encodeURIComponent(
-          query
-        )}&num=1`
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const url = data.items?.[0]?.link;
-        if (url) {
-          console.log(`✅ Google found image for "${query}" in ${Date.now() - searchStart}ms`);
-          return cacheResult(url);
-        }
-      }
-    } else {
+    if (!apiKey || !cx) {
       console.warn('⚠️ GOOGLE_API_KEY or GOOGLE_CX not configured');
+      return null;
     }
-  } catch (err) {
-    console.warn('⚠️ Google search failed:', err);
-  }
 
-  // Fallback to placeholder
-  console.log(`⚠️ No image found for "${query}", using placeholder`);
-  return cacheResult(placeholderImage);
+    const res = await fetch(
+      `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${cx}&searchType=image&q=${encodeURIComponent(
+        query
+      )}&num=1`
+    );
+
+    if (!res.ok) {
+      console.warn('⚠️ Google image search failed:', res.status, res.statusText);
+      return null;
+    }
+
+    const data = await res.json();
+    const url = data?.items?.[0]?.link ?? null;
+    imageCache.set(query, url);
+    return url;
+  } catch (err) {
+    console.error('❌ Error fetching Google image:', err);
+    return null;
+  }
 }
 
 // ==================== HELPERS ====================
@@ -205,7 +150,6 @@ Kamu adalah asisten ahli presentasi. Berdasarkan outline slide presentasi, buatl
 Gunakan berbagai jenis layout: title, bulleted-list, image, table, chart, quote, comparison, conclusion, dan three-images-with-description.
 
 WAJIB:
- disrupting
 1) Tambahkan minimal 1 slide "conclusion" di akhir presentasi.
 2) Jika ada indikasi perbandingan (mis. "vs", "kelebihan", "kekurangan", "perbandingan"), tambahkan minimal 1 slide "comparison".
 3) Jika ada topik yang cocok untuk menampilkan beberapa gambar sekaligus, gunakan layout "three-images-with-description" dengan format:
@@ -228,21 +172,29 @@ WAJIB:
       'chart',
       'quote',
       'comparison',
+      
+      'timeline',
+      'process',
       'conclusion',
       'three-images-with-description'
     ])},
     "title"?: string,
     "subtitle"?: string,
     "text"?: string,
+    "timeline"?: Array<{ "year": string, "event": string }>,
+    "process"?: Array<{ "step": string, "description": string }>,
     "bullets"?: string[],
     "table"?: { "data": string[][] },
+    "quote"?: { "text": string, "author": string },
+    "chart"?: { "type": "bar" | "line" | "pie" | "scatter", "labels": string[], "d
     "content"?: {
       "type": "bar" | "line" | "pie" | "scatter",
       "labels"?: string[],
       "datasets": Array<{ "label": string, "data": any[] }>
     },
-    "imageUrl"?: string,
+    "imageUrl"?: string ,
     "caption"?: string,
+    
     "images"?: string[],
     "description"?: string,
     "left"?: any,
